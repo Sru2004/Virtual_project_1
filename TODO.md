@@ -1,19 +1,17 @@
-# Admin Functionality Fixes
+# TODO: Artist Profile Feature Implementation
 
-## High Priority
-- [ ] Add authentication guard for admin routes in App.jsx
-- [ ] Fix AdminDashboard white page issue
-- [ ] Add missing API methods (updateUser, etc.)
-- [ ] Fix backend Order model inconsistencies
-- [ ] Improve error handling in admin components
+## Backend Changes
 
-## Medium Priority
-- [ ] Test all admin functionalities
-- [ ] Ensure proper data loading states
-- [ ] Fix chart rendering issues
-- [ ] Add proper admin navigation
+- [x] 1. Add email and phone fields to ArtistProfile schema
+- [x] 2. Ensure GET /api/artists/:id returns contact details properly
 
-## Low Priority
-- [ ] Optimize admin dashboard performance
-- [ ] Add admin notifications
-- [ ] Improve admin UI/UX
+## Frontend Changes
+
+- [x] 3. Update PublicArtistProfile to show contact details only for buyers
+- [x] 4. Test the complete flow
+
+## Verification
+
+- [x] 5. Test navigation from "Meet Our Artists" to Artist Profile
+- [x] 6. Test loading state displays
+- [x] 7. Test error handling for non-existent artist

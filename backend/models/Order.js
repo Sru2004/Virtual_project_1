@@ -19,25 +19,44 @@ const orderSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  items: [orderItemSchema],
-  amount: {
+  artwork_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Artwork',
+    required: true
+  },
+  quantity: {
+    type: Number,
+    required: true,
+    min: 1,
+    default: 1
+  },
+  total_amount: {
     type: Number,
     required: true,
     min: 0
   },
   status: {
     type: String,
-    enum: ['pending', 'completed', 'cancelled'],
+    enum: ['pending', 'completed', 'cancelled', 'delivered'],
     default: 'pending'
   },
-  paymentType: {
+  payment_type: {
     type: String,
     enum: ['COD', 'Online'],
     default: 'COD'
   },
-  address: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Address',
+  payment_status: {
+    type: String,
+    enum: ['pending', 'paid', 'failed'],
+    default: 'pending'
+  },
+  delivery_status: {
+    type: String,
+    enum: ['pending', 'shipped', 'delivered'],
+    default: 'pending'
+  },
+  shipping_address: {
+    type: String,
     required: true
   },
   order_date: {
@@ -45,6 +64,10 @@ const orderSchema = new mongoose.Schema({
     default: Date.now
   },
   created_at: {
+    type: Date,
+    default: Date.now
+  },
+  updated_at: {
     type: Date,
     default: Date.now
   }

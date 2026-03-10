@@ -1,0 +1,232 @@
+.milestone-container {
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  border-radius: 12px;
+  padding: 24px;
+  margin: 20px 0;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.milestone-container.loading,
+.milestone-container.error {
+  text-align: center;
+  padding: 40px 24px;
+}
+
+.milestone-title {
+  font-size: 24px;
+  font-weight: bold;
+  color: #2c3e50;
+  margin: 0 0 24px 0;
+  text-align: center;
+}
+
+/* Badges Section */
+.badges-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  border-radius: 12px;
+  background: white;
+  border: 2px solid #e0e0e0;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  position: relative;
+}
+
+.badge:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+}
+
+.badge.earned {
+  border-color: #d4af37;
+  background: linear-gradient(135deg, #fff9e6 0%, #fffbf0 100%);
+}
+
+.badge-bronze {
+  border-color: #cd7f32;
+}
+
+.badge-bronze.earned {
+  border-color: #cd7f32;
+}
+
+.badge-silver {
+  border-color: #c0c0c0;
+}
+
+.badge-silver.earned {
+  border-color: #c0c0c0;
+}
+
+.badge-gold {
+  border-color: #ffd700;
+}
+
+.badge-gold.earned {
+  border-color: #ffd700;
+}
+
+.badge-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.badge-content {
+  text-align: center;
+}
+
+.badge-label {
+  font-weight: bold;
+  font-size: 16px;
+  color: #2c3e50;
+  margin-bottom: 4px;
+}
+
+.badge-count {
+  font-size: 12px;
+  color: #7f8c8d;
+}
+
+.badge-earned-mark {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: #27ae60;
+  color: white;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 18px;
+  box-shadow: 0 2px 8px rgba(39, 174, 96, 0.3);
+}
+
+/* Progress Section */
+.progress-section {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.progress-section h4 {
+  margin: 0 0 16px 0;
+  color: #2c3e50;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.progress-item {
+  margin-bottom: 20px;
+}
+
+.progress-item:last-child {
+  margin-bottom: 0;
+}
+
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #2c3e50;
+}
+
+.progress-text {
+  font-weight: bold;
+  color: #3498db;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 24px;
+  background: #ecf0f1;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  transition: width 0.6s ease;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  font-size: 12px;
+  font-weight: bold;
+  color: white;
+}
+
+.progress-fill.bronze {
+  background: linear-gradient(90deg, #cd7f32, #d4a574);
+}
+
+.progress-fill.silver {
+  background: linear-gradient(90deg, #c0c0c0, #e8e8e8);
+}
+
+.progress-fill.gold {
+  background: linear-gradient(90deg, #ffd700, #ffed4e);
+}
+
+.progress-count {
+  font-size: 12px;
+  color: #7f8c8d;
+  margin-top: 4px;
+  text-align: right;
+}
+
+/* Status Message */
+.status-message {
+  text-align: center;
+  background: white;
+  padding: 16px;
+  border-radius: 8px;
+  border-left: 4px solid #3498db;
+}
+
+.status-message p {
+  margin: 0 0 8px 0;
+  font-weight: 500;
+  color: #2c3e50;
+}
+
+.status-message p:last-child {
+  margin-bottom: 0;
+}
+
+.needed-text {
+  font-size: 14px;
+  color: #e74c3c;
+  font-weight: bold;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .milestone-container {
+    padding: 16px;
+  }
+
+  .badges-section {
+    grid-template-columns: 1fr;
+  }
+
+  .milestone-title {
+    font-size: 20px;
+  }
+}

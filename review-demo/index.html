@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Artwork - Sunset Serenity | Artist Marketplace</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- User Context Bar -->
+    <aside class="user-context">
+      <h3>Demo Mode</h3>
+      <div class="user-type-toggle">
+        <button type="button" class="btn-toggle active" data-role="buyer">View as Buyer</button>
+        <button type="button" class="btn-toggle" data-role="artist">View as Artist</button>
+      </div>
+      <div class="buyer-settings" id="buyerSettings">
+        <label>Your Name:</label>
+        <input type="text" id="buyerName" placeholder="Enter your name" value="Jane Doe">
+        <button type="button" class="btn-simulate" id="simulatePurchase">Simulate Purchase</button>
+        <p class="help-text">Purchase first to leave a review</p>
+      </div>
+    </aside>
+
+    <!-- Product Section -->
+    <main class="product-page">
+      <header class="product-header">
+        <a href="#" class="back-link">← Back to Gallery</a>
+      </header>
+
+      <div class="product-grid">
+        <!-- Product Image -->
+        <section class="product-image">
+          <img src="https://images.pexels.com/photos/1266808/pexels-photo-1266808.jpeg" alt="Sunset Serenity">
+        </section>
+
+        <!-- Product Details -->
+        <section class="product-details">
+          <span class="badge category">Landscape</span>
+          <h1 class="product-title">Sunset Serenity</h1>
+          <p class="product-description">
+            A vibrant oil painting capturing the golden hour over rolling hills. 
+            Hand-painted on premium canvas, ready to hang.
+          </p>
+
+          <!-- Rating Summary (top of product) -->
+          <div class="rating-summary" id="ratingSummary">
+            <div class="rating-display">
+              <div class="stars-display" id="starsDisplay" aria-label="Average rating">
+                <!-- Filled/unfilled stars rendered by JS -->
+              </div>
+              <div class="rating-meta">
+                <span class="avg-rating" id="avgRating">0</span>
+                <span class="rating-max">/5</span>
+                <span class="review-count" id="reviewCount">(0 reviews)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Price & Artist -->
+          <div class="price-block">
+            <p class="price">₹24,500</p>
+            <p class="artist-name">By <strong>Ravi Sharma</strong></p>
+          </div>
+
+          <button type="button" class="btn-add-cart">Add to Cart</button>
+        </section>
+      </div>
+
+      <!-- Reviews Section -->
+      <section class="reviews-section">
+        <h2>Customer Reviews</h2>
+
+        <!-- Write Review (only for verified buyers) -->
+        <div class="write-review" id="writeReview" hidden>
+          <h3>Write a Review</h3>
+          <form id="reviewForm">
+            <div class="form-group">
+              <label>Your Rating <span class="required">*</span></label>
+              <div class="star-input" id="starInput" role="group" aria-label="Rate 1 to 5 stars">
+                <button type="button" class="star-btn" data-value="1" aria-label="1 star">★</button>
+                <button type="button" class="star-btn" data-value="2" aria-label="2 stars">★</button>
+                <button type="button" class="star-btn" data-value="3" aria-label="3 stars">★</button>
+                <button type="button" class="star-btn" data-value="4" aria-label="4 stars">★</button>
+                <button type="button" class="star-btn" data-value="5" aria-label="5 stars">★</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="reviewComment">Your Review <span class="required">*</span></label>
+              <textarea id="reviewComment" rows="4" placeholder="Share your experience with this artwork..." minlength="5"></textarea>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn-submit" id="submitReview">Submit Review</button>
+              <button type="button" class="btn-cancel" id="cancelEdit" hidden>Cancel</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Purchase required message -->
+        <div class="purchase-required" id="purchaseRequired">
+          <p>Only verified buyers can leave a review. Purchase this artwork to share your experience.</p>
+        </div>
+
+        <!-- Artist view message -->
+        <div class="artist-view-msg" id="artistViewMsg" hidden>
+          <p>As the artist, you cannot submit or modify buyer reviews.</p>
+        </div>
+
+        <!-- Reviews List -->
+        <div class="reviews-list" id="reviewsList">
+          <!-- Reviews rendered by JS -->
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="reviews.js"></script>
+</body>
+</html>

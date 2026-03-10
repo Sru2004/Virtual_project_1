@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#000000">
+  <title>AR Artwork Viewer | VisualArt</title>
+  <link rel="stylesheet" href="ar-viewer.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Protection overlay to reduce easy screen capture -->
+    <div id="protectionOverlay" class="protection-overlay" aria-hidden="true"></div>
+
+    <!-- Copyright notice -->
+    <div id="copyrightNotice" class="copyright-notice">
+      Screenshots and recordings are restricted to protect artist copyrights.
+    </div>
+
+    <!-- Pre-AR UI -->
+    <div id="preAR" class="pre-ar">
+      <div class="pre-ar-content">
+        <h1>AR / 3D Artwork Preview</h1>
+        <p id="modeDescription">Checking device...</p>
+        <div class="artwork-preview" id="artworkPreview">
+          <img id="previewImg" src="" alt="Artwork preview">
+        </div>
+        <button id="enterAR" class="btn-ar" disabled>Enter AR</button>
+        <button id="enter3D" class="btn-ar btn-3d" hidden>Start 3D Preview (Laptop/Desktop)</button>
+        <p id="arStatus" class="ar-status">Checking AR support...</p>
+      </div>
+    </div>
+
+    <!-- Desktop 3D mode instructions -->
+    <div id="desktopInstructions" class="desktop-instructions" hidden>
+      <p>Drag to rotate • Scroll to zoom • Use controls below to scale</p>
+    </div>
+
+    <!-- In-AR UI (shown when in XR or 3D session) -->
+    <div id="inAR" class="in-ar" hidden>
+      <button id="exitAR" class="btn-exit" aria-label="Exit">Exit</button>
+      <div class="controls">
+        <button id="btnScaleDown" class="btn-control" aria-label="Scale down">−</button>
+        <span id="scaleLabel">100%</span>
+        <button id="btnScaleUp" class="btn-control" aria-label="Scale up">+</button>
+        <button id="btnReposition" class="btn-reposition">Reposition</button>
+      </div>
+    </div>
+
+    <!-- Blur overlay when tab inactive -->
+    <div id="blurOverlay" class="blur-overlay" hidden>
+      <p>Preview paused — tab is inactive</p>
+    </div>
+
+    <!-- WebGL canvas (injected by Three.js) -->
+    <div id="canvasContainer"></div>
+  </div>
+
+  <script type="module" src="ar-viewer.js"></script>
+</body>
+</html>

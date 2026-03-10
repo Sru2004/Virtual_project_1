@@ -63,11 +63,22 @@ export const AuthProvider = ({ children }) => {
       setProfile(null);
       setArtistProfile(null);
       localStorage.removeItem('token');
+      // Clear cart data on logout
+      localStorage.removeItem('cartItems');
+      window.dispatchEvent(new Event('storage'));
     }
   };
 
   useEffect(() => {
     const initAuth = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+
+      api.setToken(token);
+
       try {
         const currentUser = await getCurrentProfile();
         if (currentUser) {
@@ -78,6 +89,7 @@ export const AuthProvider = ({ children }) => {
         console.error('Error initializing auth:', error);
         // Clear any invalid tokens
         localStorage.removeItem('token');
+        api.clearToken();
       } finally {
         setLoading(false);
       }

@@ -21,6 +21,7 @@ const userSchema = new mongoose.Schema({
   },
   phone: String,
   profile_picture: String,
+  signatureImage: String,
   address: String,
   gender: {
     type: String,
@@ -37,6 +38,12 @@ const userSchema = new mongoose.Schema({
   updated_at: {
     type: Date,
     default: Date.now
+  },
+  resetPasswordToken: String,
+  resetPasswordExpire: Date,
+  tokenVersion: {
+    type: Number,
+    default: 0
   }
 });
 

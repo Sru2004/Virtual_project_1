@@ -8,11 +8,16 @@ const auth = async (req, res, next) => {
       return res.status(401).json({ message: 'No token provided' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
     const user = await User.findById(decoded.userId);
 
     if (!user) {
       return res.status(401).json({ message: 'User not found' });
+    }
+
+    const tokenVersion = decoded.tokenVersion ?? 0;
+    if (Number(user.tokenVersion || 0) !== Number(tokenVersion)) {
+      return res.status(401).json({ message: 'Invalid token' });
     }
 
     req.user = user;

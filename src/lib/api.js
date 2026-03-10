@@ -1,6 +1,6 @@
 
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 class ApiClient {
   constructor() {
@@ -31,11 +31,15 @@ class ApiClient {
     const response = await fetch(url, {
       ...options,
       headers,
+      cache: 'no-cache',
     });
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: 'An error occurred' }));
-      throw new Error(error.message || `HTTP ${response.status}`);
+      const requestError = new Error(error.message || `HTTP ${response.status}`);
+      requestError.status = response.status;
+      requestError.data = error;
+      throw requestError;
     }
 
     return response.json();
@@ -58,6 +62,20 @@ class ApiClient {
     });
     this.setToken(response.token);
     return response;
+  }
+
+  async forgotPassword(email) {
+    return this.request('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    });
+  }
+
+  async resetPassword(token, password, confirmPassword) {
+    return this.request(`/auth/reset-password/${token}`, {
+      method: 'POST',
+      body: JSON.stringify({ password, confirmPassword })
+    });
   }
 
   async logout() {
@@ -94,68 +112,60 @@ class ApiClient {
     });
   }
 
+  async uploadSignature(userId, formData) {
+    const url = `${API_BASE_URL}/profiles/${userId}/signature`;
+    const headers = {};
+
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+      const requestError = new Error(error.message || `HTTP ${response.status}`);
+      requestError.status = response.status;
+      requestError.data = error;
+      throw requestError;
+    }
+
+    return response.json();
+  }
+
+  async uploadProfilePicture(id, formData) {
+    const url = `${API_BASE_URL}/profiles/${id}`;
+    const headers = {};
+
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers,
+      body: formData,
+      cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+      const requestError = new Error(error.message || `HTTP ${response.status}`);
+      requestError.status = response.status;
+      requestError.data = error;
+      throw requestError;
+    }
+
+    return response.json();
+  }
+
   async deleteProfile(id) {
     return this.request(`/profiles/${id}`, {
-      method: 'DELETE',
-    });
-  }
-
-  // Artwork endpoints
-  async getAllArtworks() {
-    return this.request('/artworks');
-  }
-
-  async getArtwork(id) {
-    return this.request(`/artworks/${id}`);
-  }
-
-  async updateArtwork(id, updates) {
-    return this.request(`/artworks/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(updates),
-    });
-  }
-
-  async deleteArtwork(id) {
-    return this.request(`/artworks/${id}`, {
-      method: 'DELETE',
-    });
-  }
-
-  // Order endpoints
-  async getAllOrders() {
-    return this.request('/orders');
-  }
-
-  async getOrder(id) {
-    return this.request(`/orders/${id}`);
-  }
-
-  async updateOrder(id, updates) {
-    return this.request(`/orders/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(updates),
-    });
-  }
-
-  // Review endpoints
-  async getAllReviews() {
-    return this.request('/reviews');
-  }
-
-  async getReview(id) {
-    return this.request(`/reviews/${id}`);
-  }
-
-  async updateReview(id, updates) {
-    return this.request(`/reviews/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(updates),
-    });
-  }
-
-  async deleteReview(id) {
-    return this.request(`/reviews/${id}`, {
       method: 'DELETE',
     });
   }
@@ -167,6 +177,17 @@ class ApiClient {
 
   async getArtistProfile(id) {
     return this.request(`/artist-profiles/${id}`);
+  }
+
+  async getArtistProfileByUserId(userId) {
+    return this.request(`/artist-profiles/user/${userId}`);
+  }
+
+  async createArtistProfile(data) {
+    return this.request('/artist-profiles', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   async updateArtistProfile(id, updates) {
@@ -182,10 +203,85 @@ class ApiClient {
     });
   }
 
+  // Artist discovery for Meet Our Artists (public, no auth required)
+  async getArtists() {
+    const url = `${API_BASE_URL}/artists/public`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-cache',
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    }
+    // Fallback for logged-in users if public endpoint fails (e.g. old backend)
+    if (this.token) {
+      try {
+        return await this.request('/artists');
+      // eslint-disable-next-line no-unused-vars
+      } catch (_) { /* empty */ }
+    }
+    const err = await res.json().catch(() => ({ message: 'Failed to load artists' }));
+    throw new Error(err.message || `Failed to load artists (${res.status})`);
+  }
+
+  async getArtist(id) {
+    return this.request(`/artists/${id}`);
+  }
+
   // Artwork endpoints
   async getArtworks(params) {
     const query = params ? '?' + new URLSearchParams(params).toString() : '';
     return this.request(`/artworks${query}`);
+  }
+
+  // Public artworks (no auth required)
+  async getPublicArtworks(params) {
+    const query = params ? '?' + new URLSearchParams(params).toString() : '';
+    const url = `${API_BASE_URL}/artworks/public${query}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+      const requestError = new Error(error.message || `HTTP ${response.status}`);
+      requestError.status = response.status;
+      requestError.data = error;
+      throw requestError;
+    }
+
+    return response.json();
+  }
+
+  async getPublicArtwork(id) {
+    const url = `${API_BASE_URL}/artworks/public/${id}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+      const requestError = new Error(error.message || `HTTP ${response.status}`);
+      requestError.status = response.status;
+      requestError.data = error;
+      throw requestError;
+    }
+
+    return response.json();
+  }
+
+  async getArtwork(id) {
+    return this.request(`/artworks/${id}`);
   }
 
   async getMyArtworks() {
@@ -194,10 +290,6 @@ class ApiClient {
 
   async getAllArtworks() {
     return this.request('/artworks');
-  }
-
-  async getArtwork(id) {
-    return this.request(`/artworks/${id}`);
   }
 
   async createArtwork(data) {
@@ -223,7 +315,10 @@ class ApiClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: 'An error occurred' }));
-      throw new Error(error.message || `HTTP ${response.status}`);
+      const requestError = new Error(error.message || `HTTP ${response.status}`);
+      requestError.status = response.status;
+      requestError.data = error;
+      throw requestError;
     }
 
     return response.json();
@@ -242,6 +337,32 @@ class ApiClient {
     });
   }
 
+  // Get short-lived token for original image
+  async getOriginalImageToken(artworkId) {
+    return this.request(`/artworks/${artworkId}/original-token`, {
+      method: 'POST'
+    });
+  }
+
+  // Download original image (returns Blob)
+  async downloadOriginalImage(artworkId) {
+    const { token } = await this.getOriginalImageToken(artworkId);
+    const url = `${API_BASE_URL}/artworks/${artworkId}/original?token=${encodeURIComponent(token)}`;
+    const headers = {};
+
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
   // Order endpoints
   async getOrders() {
     const response = await this.request('/orders');
@@ -252,27 +373,21 @@ class ApiClient {
     return this.request('/orders');
   }
 
-  async getOrder(id) {
-    return this.request(`/orders/${id}`);
+  async getArtistOrders() {
+    return this.request('/orders/artist');
+  }
+
+  async updateArtistOrderDeliveryStatus(orderId, delivery_status) {
+    return this.request(`/orders/${orderId}/artist-delivery`, {
+      method: 'PUT',
+      body: JSON.stringify({ delivery_status })
+    });
   }
 
   async createOrder(data) {
     return this.request('/orders', {
       method: 'POST',
       body: JSON.stringify(data),
-    });
-  }
-
-  async updateOrder(id, updates) {
-    return this.request(`/orders/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(updates),
-    });
-  }
-
-  async deleteOrder(id) {
-    return this.request(`/orders/${id}`, {
-      method: 'DELETE',
     });
   }
 
@@ -285,8 +400,12 @@ class ApiClient {
     return this.request('/reviews');
   }
 
-  async getReview(id) {
-    return this.request(`/reviews/${id}`);
+  async getArtistReviews() {
+    return this.request('/reviews/artist');
+  }
+
+  async getArtistProfileReviews(artistId) {
+    return this.request(`/reviews/artist-profile/${artistId}`);
   }
 
   async createReview(data) {
@@ -296,17 +415,20 @@ class ApiClient {
     });
   }
 
-  async updateReview(id, updates) {
-    return this.request(`/reviews/${id}`, {
+  async updateReview(reviewId, data) {
+    return this.request(`/reviews/${reviewId}`, {
       method: 'PUT',
-      body: JSON.stringify(updates),
+      body: JSON.stringify(data),
     });
   }
 
-  async deleteReview(id) {
-    return this.request(`/reviews/${id}`, {
-      method: 'DELETE',
-    });
+  async getUserReviews() {
+    return this.request('/reviews');
+  }
+
+  // Artist dashboard endpoints
+  async getArtistDashboardStats() {
+    return this.request('/artists/dashboard-stats');
   }
 
   // Wishlist endpoints
@@ -329,6 +451,37 @@ class ApiClient {
 
   async checkWishlist(artworkId) {
     return this.request(`/wishlist/check/${artworkId}`);
+  }
+
+  // Cart endpoints
+  async getCart() {
+    return this.request('/cart');
+  }
+
+  async addToCart(artworkId) {
+    return this.request('/cart/add', {
+      method: 'POST',
+      body: JSON.stringify({ artworkId }),
+    });
+  }
+
+  async removeFromCart(artworkId) {
+    return this.request(`/cart/remove/${artworkId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateCartItem(artworkId, quantity) {
+    return this.request(`/cart/update/${artworkId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ quantity }),
+    });
+  }
+
+  async clearCart() {
+    return this.request('/cart/clear', {
+      method: 'DELETE',
+    });
   }
 
   // Address endpoints

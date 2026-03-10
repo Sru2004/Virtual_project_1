@@ -1,3 +1,83 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+/* =========================
+   Rainbow animation & white glow
+   ========================= */
+
+/* Strong white text shadow */
+.text-shadow-white {
+  text-shadow:
+    0 0 1px #ffffff,
+    0 0 2px #ffffff,
+    0 0 3px #ffffff,
+    0 0 4px #ffffff,
+    0 0 5px #ffffff;
+}
+
+/* Rainbow animation */
+@keyframes rainbow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-rainbow {
+  background-size: 300% 300%;
+  animation: rainbow 5s linear infinite;
+}
+
+@keyframes softFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-soft {
+  animation: softFadeUp 0.6s ease-out both;
+}
+
+.artist-card,
+.artwork-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.artist-card:hover,
+.artwork-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+}
+
+.line-clamp-2,
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-2 {
+  -webkit-line-clamp: 2;
+}
+
+.line-clamp-3 {
+  -webkit-line-clamp: 3;
+}
+
+/* Slow pulse animation for AR warning */
+@keyframes pulse-slow {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s ease-in-out infinite;
+}

@@ -1,12 +1,14 @@
+require('dotenv').config();
 const mongoose = require('mongoose');
 const Artwork = require('./models/Artwork');
 const ArtistProfile = require('./models/ArtistProfile');
 
 async function checkArtworks() {
   try {
-    await mongoose.connect('mongodb://localhost:27017/artgallery', {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
+    const uri = process.env.MONGODB_URI || 'mongodb+srv://srujanatoukare:Srujana123@cluster0.cp7lq.mongodb.net/virtual?appName=Cluster0';
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
     });
 
     console.log('Connected to MongoDB');

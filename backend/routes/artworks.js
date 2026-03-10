@@ -1,10 +1,233 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const { body, validationResult } = require('express-validator');
+const fs = require('fs').promises;
+const http = require('http');
+const https = require('https');
+const path = require('path');
+const sharp = require('sharp');
 const Artwork = require('../models/Artwork');
+const Order = require('../models/Order');
 const ArtistProfile = require('../models/ArtistProfile');
+const User = require('../models/User');
+const Review = require('../models/Review');
 const { auth } = require('../middleware/auth');
+const upload = require('../middleware/upload');
+const { generateSHA256Hash, generateNormalizedSHA256Hash, generatePerceptualHash, calculateHashSimilarity } = require('../utils/imageHash');
+const { detectWatermarkedText } = require('../utils/textDetection');
+const { generateWatermarkedPreview } = require('../utils/watermark');
 
 const router = express.Router();
+
+const MAX_IMAGE_BYTES = Number(process.env.MAX_IMAGE_BYTES || 5242880);
+const MAX_IMAGE_REDIRECTS = 3;
+
+const toAbsoluteUrl = (req, value) => {
+  if (!value) return value;
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return value;
+  }
+  const clean = value.startsWith('/') ? value : `/${value}`;
+  return `${req.protocol}://${req.get('host')}${clean}`;
+};
+
+const normalizeArtworkImages = (req, artwork) => {
+  const data = artwork.toObject ? artwork.toObject() : { ...artwork };
+  const imgUrl = data.image_url || data.watermarked_image_url || data.watermarkedImage;
+  const watermarkedUrl = data.watermarked_image_url || data.watermarkedImage || data.image_url;
+  data.image_url = toAbsoluteUrl(req, imgUrl);
+  data.watermarked_image_url = toAbsoluteUrl(req, watermarkedUrl);
+  if (!data.image_url) data.image_url = data.watermarked_image_url;
+  return data;
+};
+
+// Public route to get all published artworks (no auth required)
+router.get('/public', async (req, res) => {
+  try {
+    const { category, artist_id } = req.query;
+    const query = { status: 'published' };
+    if (category) query.category = category;
+    if (artist_id) query.artist_id = artist_id;
+    
+    console.log('Public artworks query:', query);
+    const artworks = await Artwork.find(query)
+      .select('-original_image_url -originalImage -originalImagePath')
+      .populate('artist_id', 'full_name')
+      .sort({ created_at: -1 });
+    
+    console.log('Found public artworks:', artworks.length);
+    
+    // Enrich artworks with artist names from profiles (artist_id can ref User or ArtistProfile)
+    const enrichedArtworks = await Promise.all(
+      artworks.map(async (artwork) => {
+        const artworkObj = normalizeArtworkImages(req, artwork);
+        const rawArtistId = artwork.artist_id?._id || artwork.artist_id;
+
+        if (rawArtistId) {
+          let resolvedArtistName = null;
+          
+          // First, check if artist_id is an ArtistProfile reference (not User)
+          // The populate with 'full_name' might not work if artist_id points to ArtistProfile
+          const artistProfile = await ArtistProfile.findById(rawArtistId);
+          
+          if (artistProfile) {
+            // artist_id is an ArtistProfile ObjectId
+            resolvedArtistName = artistProfile.artist_name;
+          } else {
+            // Try to find as User
+            const user = await User.findById(rawArtistId);
+            resolvedArtistName = user?.full_name;
+          }
+          
+          // Also check if populated artist_id has full_name (for User references)
+          if (!resolvedArtistName && artwork.artist_id && typeof artwork.artist_id === 'object' && artwork.artist_id.full_name) {
+            resolvedArtistName = artwork.artist_id.full_name;
+          }
+          
+          if (resolvedArtistName) {
+            artworkObj.artist_name = resolvedArtistName;
+            artworkObj.artist_id = artworkObj.artist_id && typeof artworkObj.artist_id === 'object'
+              ? { ...artworkObj.artist_id, artist_name: resolvedArtistName }
+              : { _id: rawArtistId, artist_name: resolvedArtistName };
+          }
+        }
+
+        // Add rating information
+        const reviews = await Review.find({ artwork_id: artwork._id });
+        if (reviews && reviews.length > 0) {
+          const totalRating = reviews.reduce((sum, review) => sum + review.rating, 0);
+          const avgRating = totalRating / reviews.length;
+          artworkObj.avg_rating = Math.round(avgRating * 10) / 10;
+          artworkObj.total_reviews = reviews.length;
+        } else {
+          artworkObj.avg_rating = 0;
+          artworkObj.total_reviews = 0;
+        }
+
+        return artworkObj;
+      })
+    );
+    
+    res.json(enrichedArtworks);
+  } catch (error) {
+    console.error('Error fetching public artworks:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Public route to get a single published artwork by ID (no auth required)
+router.get('/public/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ message: 'Artwork not found' });
+    }
+
+    const artwork = await Artwork.findById(id)
+      .select('-original_image_url -originalImage -originalImagePath')
+      .populate('artist_id', 'full_name');
+
+    if (!artwork) {
+      return res.status(404).json({ message: 'Artwork not found' });
+    }
+
+    // Only allow access if artwork is published or has no explicit status
+    if (artwork.status && artwork.status !== 'published') {
+      return res.status(404).json({ message: 'Artwork not found' });
+    }
+
+    const artworkObj = normalizeArtworkImages(req, artwork);
+    const rawArtistId = artwork.artist_id?._id || artwork.artist_id;
+
+    // Resolve artist name similar to /public list
+    if (rawArtistId) {
+      let resolvedArtistName = null;
+
+      const artistProfile = await ArtistProfile.findById(rawArtistId);
+      if (artistProfile) {
+        resolvedArtistName = artistProfile.artist_name;
+      } else {
+        const user = await User.findById(rawArtistId);
+        resolvedArtistName = user?.full_name;
+      }
+
+      if (!resolvedArtistName && artwork.artist_id && typeof artwork.artist_id === 'object' && artwork.artist_id.full_name) {
+        resolvedArtistName = artwork.artist_id.full_name;
+      }
+
+      if (resolvedArtistName) {
+        artworkObj.artist_name = resolvedArtistName;
+        artworkObj.artist_id = artworkObj.artist_id && typeof artworkObj.artist_id === 'object'
+          ? { ...artworkObj.artist_id, artist_name: resolvedArtistName }
+          : { _id: rawArtistId, artist_name: resolvedArtistName };
+      }
+    }
+
+    // Attach rating information
+    const reviews = await Review.find({ artwork_id: artwork._id });
+    if (reviews && reviews.length > 0) {
+      const totalRating = reviews.reduce((sum, review) => sum + review.rating, 0);
+      const avgRating = totalRating / reviews.length;
+      artworkObj.avg_rating = Math.round(avgRating * 10) / 10;
+      artworkObj.total_reviews = reviews.length;
+    } else {
+      artworkObj.avg_rating = 0;
+      artworkObj.total_reviews = 0;
+    }
+
+    res.json(artworkObj);
+  } catch (error) {
+    console.error('Error fetching public artwork by id:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+const downloadImageBuffer = (imageUrl, redirectCount = 0) => new Promise((resolve, reject) => {
+  try {
+    const url = new URL(imageUrl);
+    const client = url.protocol === 'https:' ? https : http;
+
+    const req = client.get(url, (res) => {
+      const statusCode = res.statusCode || 0;
+
+      if (statusCode >= 300 && statusCode < 400 && res.headers.location && redirectCount < MAX_IMAGE_REDIRECTS) {
+        res.resume();
+        resolve(downloadImageBuffer(res.headers.location, redirectCount + 1));
+        return;
+      }
+
+      if (statusCode < 200 || statusCode >= 300) {
+        res.resume();
+        reject(new Error('Failed to download image'));
+        return;
+      }
+
+      const chunks = [];
+      let size = 0;
+
+      res.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > MAX_IMAGE_BYTES) {
+          req.destroy(new Error('Image too large'));
+          return;
+        }
+        chunks.push(chunk);
+      });
+
+      res.on('end', () => {
+        resolve(Buffer.concat(chunks));
+      });
+    });
+
+    req.on('error', reject);
+    req.setTimeout(10000, () => {
+      req.destroy(new Error('Image download timeout'));
+    });
+  } catch (error) {
+    reject(error);
+  }
+});
 
 // Get all artworks (published or own)
 router.get('/', auth, async (req, res) => {
@@ -59,9 +282,11 @@ router.get('/', auth, async (req, res) => {
     }
 
     console.log('Artwork query:', query);
-    const artworks = await Artwork.find(query).populate('artist_id', 'full_name');
+    const artworks = await Artwork.find(query)
+      .select('-original_image_url -originalImage -originalImagePath')
+      .populate('artist_id', 'full_name');
     console.log('Found artworks:', artworks.length);
-    res.json(artworks);
+    res.json(artworks.map(artwork => normalizeArtworkImages(req, artwork)));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -70,32 +295,44 @@ router.get('/', auth, async (req, res) => {
 // Get my artworks (for artist dashboard)
 router.get('/my-artworks', auth, async (req, res) => {
   try {
-    // Only artists can access their own artworks
-    if (req.user.user_type !== 'artist') {
-      return res.status(403).json({ message: 'Only artists can access their artworks' });
-    }
-
-    const artistProfile = await ArtistProfile.findOne({ user_id: req.user._id });
-
-    // Include both user_id and artist_profile_id if exists
-    const artistIds = [req.user._id];
-    if (artistProfile) artistIds.push(artistProfile._id);
+    const artistProfiles = await ArtistProfile.find({ user_id: req.user._id });
+    const artistIds = [
+      new mongoose.Types.ObjectId(req.user._id.toString()),
+      ...artistProfiles.map((p) => new mongoose.Types.ObjectId(p._id.toString())),
+    ];
 
     const query = { artist_id: { $in: artistIds } };
 
-    console.log('My artworks query:', query);
+    console.log('My artworks query:', JSON.stringify(query));
     console.log('User ID:', req.user._id);
-    console.log('Artist Profile ID:', artistProfile ? artistProfile._id : 'None');
+    console.log('Artist IDs (user + profiles):', artistIds.length);
 
-    const artworks = await Artwork.find(query).populate('artist_id', 'full_name').sort({ created_at: -1 });
+    const artworks = await Artwork.find(query)
+      .select('-original_image_url -originalImage -originalImagePath')
+      .populate('artist_id', 'full_name')
+      .sort({ created_at: -1 })
+      .lean();
     console.log('Found my artworks:', artworks.length);
 
-    // Log each artwork for debugging
-    artworks.forEach((artwork, index) => {
-      console.log(`${index + 1}. Title: ${artwork.title}, Artist ID: ${artwork.artist_id}`);
+    const enriched = artworks.map((artwork) => {
+      const obj = normalizeArtworkImages(req, artwork);
+      const rawArtistId = artwork.artist_id?._id || artwork.artist_id;
+      if (rawArtistId) {
+        let name = artwork.artist_id?.full_name;
+        if (!name) {
+          const profile = artistProfiles.find((p) => p._id.toString() === rawArtistId.toString());
+          if (profile) name = profile.artist_name;
+        }
+        if (!name) {
+          if (rawArtistId.toString() === req.user._id.toString()) {
+            name = req.user.full_name;
+          }
+        }
+        obj.artist_name = name || 'Artist';
+      }
+      return obj;
     });
-
-    res.json(artworks);
+    res.json(enriched);
   } catch (error) {
     console.error('Error fetching my artworks:', error);
     res.status(500).json({ message: error.message });
@@ -105,17 +342,34 @@ router.get('/my-artworks', auth, async (req, res) => {
 // Get artwork by ID
 router.get('/:id', auth, async (req, res) => {
   try {
-    const artwork = await Artwork.findById(req.params.id).populate('artist_id', 'full_name');
+    const artwork = await Artwork.findById(req.params.id)
+      .select('-original_image_url -originalImage -originalImagePath')
+      .populate('artist_id', 'full_name');
     if (!artwork) {
       return res.status(404).json({ message: 'Artwork not found' });
     }
 
     // Check if user can view this artwork
-    if (artwork.status !== 'published' && artwork.artist_id.toString() !== req.user._id.toString() && req.user.user_type !== 'admin') {
+    let canView = false;
+    if (artwork.status === 'published') {
+      canView = true;
+    } else if (req.user.user_type === 'admin') {
+      canView = true;
+    } else {
+      // Check if user is the artist
+      const artistProfile = await ArtistProfile.findOne({ user_id: req.user._id });
+      const userArtistIds = [req.user._id];
+      if (artistProfile) userArtistIds.push(artistProfile._id);
+      if (userArtistIds.some(id => id.toString() === artwork.artist_id._id.toString())) {
+        canView = true;
+      }
+    }
+
+    if (!canView) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    res.json(artwork);
+    res.json(normalizeArtworkImages(req, artwork));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -150,9 +404,72 @@ router.post('/', auth, [
       artistId = artistProfile._id;
     }
 
+    const imageUrl = req.body.image_url;
+    const fileBuffer = await downloadImageBuffer(imageUrl);
+    const imageMeta = await sharp(fileBuffer).metadata();
+    const allowedFormats = new Set(['jpeg', 'png', 'webp']);
+    if (!allowedFormats.has(imageMeta.format)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid image type. Only jpg, jpeg, png, webp allowed.'
+      });
+    }
+
+    const sha256Hash = generateSHA256Hash(fileBuffer);
+    const imageHash = await generateNormalizedSHA256Hash(fileBuffer);
+    console.log('Generated SHA-256 hash:', sha256Hash);
+
+    const perceptualHash = await generatePerceptualHash(fileBuffer);
+    console.log('Generated perceptual hash:', perceptualHash || 'N/A');
+
+    const exactDuplicate = await Artwork.findOne({ $or: [{ sha256Hash }, { imageHash }] })
+      .select('_id artist_id');
+    if (exactDuplicate) {
+      return res.status(409).json({
+        success: false,
+        errorType: 'DUPLICATE_IMAGE',
+        message: 'Duplicate artwork detected.'
+      });
+    }
+
+    if (perceptualHash) {
+      const minSimilarity = Number(process.env.IMAGE_SIMILARITY_MIN || 0.9);
+      const allArtworks = await Artwork.find({ perceptualHash: { $exists: true, $ne: null } })
+        .select('perceptualHash artist_id')
+        .limit(2000);
+
+      for (const artwork of allArtworks) {
+        const similarity = calculateHashSimilarity(perceptualHash, artwork.perceptualHash);
+        if (similarity >= minSimilarity) {
+          const isDifferentArtist = artwork.artist_id?.toString() !== artistId?.toString();
+          return res.status(409).json({
+            success: false,
+            errorType: 'DUPLICATE_IMAGE',
+            message: isDifferentArtist
+              ? 'Similar artwork already exists.'
+              : 'Similar artwork already exists.'
+          });
+        }
+      }
+    }
+
+    const watermarkScan = await detectWatermarkedText(fileBuffer);
+    if (watermarkScan.hasKeyword || watermarkScan.hasLargeTextOverlay || watermarkScan.cornerTextDetected) {
+      return res.status(422).json({
+        success: false,
+        errorType: 'WATERMARK_DETECTED',
+        message: 'Watermarked or copyrighted images are not allowed.'
+      });
+    }
+
+    // Create artwork with published status by default
     const artwork = new Artwork({
       ...req.body,
-      artist_id: artistId
+      artist_id: artistId,
+      imageHash,
+      sha256Hash,
+      perceptualHash,
+      status: req.body.status || 'published' // Default to published for immediate visibility
     });
 
     await artwork.save();
@@ -171,6 +488,14 @@ router.post('/', auth, [
 
     res.status(201).json(artwork);
   } catch (error) {
+    if (error.code === 11000 && (error.keyPattern?.imageHash || error.keyValue?.imageHash || error.keyPattern?.sha256Hash || error.keyValue?.sha256Hash)) {
+      return res.status(409).json({
+        success: false,
+        errorType: 'DUPLICATE_IMAGE',
+        message: 'Duplicate artwork detected.'
+      });
+    }
+
     res.status(500).json({ message: error.message });
   }
 });
@@ -194,14 +519,29 @@ router.put('/:id', auth, [
     }
 
     // Check if user can update this artwork
-    if (artwork.artist_id.toString() !== req.user._id.toString() && req.user.user_type !== 'admin') {
+    let canUpdate = false;
+    if (req.user.user_type === 'admin') {
+      canUpdate = true;
+    } else {
+      // Check if user is the artist
+      const artistProfile = await ArtistProfile.findOne({ user_id: req.user._id });
+      const userArtistIds = [req.user._id];
+      if (artistProfile) userArtistIds.push(artistProfile._id);
+      if (userArtistIds.some(id => id.toString() === artwork.artist_id.toString())) {
+        canUpdate = true;
+      }
+    }
+
+    if (!canUpdate) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
     const updates = req.body;
     updates.updated_at = new Date();
 
-    const updatedArtwork = await Artwork.findByIdAndUpdate(req.params.id, updates, { new: true }).populate('artist_id', 'full_name');
+    const updatedArtwork = await Artwork.findByIdAndUpdate(req.params.id, updates, { new: true })
+      .select('-original_image_url -originalImage -originalImagePath')
+      .populate('artist_id', 'full_name');
     res.json(updatedArtwork);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -211,22 +551,63 @@ router.put('/:id', auth, [
 // Delete artwork
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const artwork = await Artwork.findById(req.params.id);
+    console.log('Delete request for artwork:', req.params.id);
+    console.log('User:', req.user._id, req.user.user_type);
+
+    const artwork = await Artwork.findById(req.params.id).populate('artist_id');
     if (!artwork) {
+      console.log('Artwork not found');
       return res.status(404).json({ message: 'Artwork not found' });
     }
 
+    console.log('Artwork artist_id:', artwork.artist_id);
+
     // Check if user can delete this artwork
-    if (artwork.artist_id.toString() !== req.user._id.toString() && req.user.user_type !== 'admin') {
+    let canDelete = false;
+    if (req.user.user_type === 'admin') {
+      canDelete = true;
+      console.log('User is admin, can delete');
+    } else if (artwork.artist_id) {
+      // Check if user is the artist
+      const artistProfile = await ArtistProfile.findOne({ user_id: req.user._id });
+      console.log('Artist profile found:', artistProfile ? artistProfile._id : 'None');
+
+      const userArtistIds = [req.user._id];
+      if (artistProfile) userArtistIds.push(artistProfile._id);
+
+      console.log('userArtistIds:', userArtistIds.map(id => id.toString()));
+      console.log('artwork.artist_id:', artwork.artist_id);
+
+      // Safely handle both populated and non-populated artist_id
+      const artworkArtistId = artwork.artist_id && artwork.artist_id._id 
+        ? artwork.artist_id._id.toString() 
+        : artwork.artist_id ? artwork.artist_id.toString() : null;
+
+      if (artworkArtistId && userArtistIds.some(id => id.toString() === artworkArtistId)) {
+        canDelete = true;
+        console.log('User is the artist, can delete');
+      } else {
+        console.log('User is not the artist, cannot delete');
+      }
+    } else {
+      console.log('Artwork has no artist_id, checking if orphaned artwork');
+      // If artwork has no artist_id, allow deletion for authenticated users (orphaned artwork)
+      canDelete = true;
+    }
+
+    if (!canDelete) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    // Get the artist profile to decrement artworks_sold count
-    const artistProfile = await ArtistProfile.findById(artwork.artist_id);
-    if (artistProfile && artistProfile.artworks_sold > 0) {
-      await ArtistProfile.findByIdAndUpdate(artwork.artist_id, {
-        $inc: { artworks_sold: -1 }
-      });
+    // Get the artist profile to decrement artworks_sold count (only if artist_id exists)
+    if (artwork.artist_id) {
+      const artistIdToUse = artwork.artist_id._id ? artwork.artist_id._id : artwork.artist_id;
+      const artistProfile = await ArtistProfile.findById(artistIdToUse);
+      if (artistProfile && artistProfile.artworks_sold > 0) {
+        await ArtistProfile.findByIdAndUpdate(artistIdToUse, {
+          $inc: { artworks_sold: -1 }
+        });
+      }
     }
 
     await Artwork.findByIdAndDelete(req.params.id);
@@ -237,58 +618,184 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // Upload artwork with image
-router.post('/upload', auth, require('../middleware/upload').single('image'), async (req, res) => {
+router.post('/upload', auth, upload.artworkUpload.single('image'), async (req, res) => {
   console.log('Upload request received');
   console.log('User:', req.user);
   console.log('Body:', req.body);
   console.log('File:', req.file);
 
+  let uploadedFilePath = null;
+
   try {
     // Check if file was uploaded
     if (!req.file) {
       console.log('No file uploaded');
-      return res.status(400).json({ message: 'No image file provided' });
+      return res.status(400).json({ 
+        success: false,
+        message: 'No image file provided' 
+      });
     }
+
+    uploadedFilePath = req.file.path;
 
     // Simple validation
     if (!req.body.title || !req.body.category || !req.body.price) {
       console.log('Validation failed: missing fields');
-      return res.status(400).json({ message: 'Missing required fields: title, category, price' });
+      // Clean up uploaded file
+      await fs.unlink(uploadedFilePath).catch(err => console.error('Error deleting file:', err));
+      return res.status(400).json({ 
+        success: false,
+        message: 'Missing required fields: title, category, price' 
+      });
     }
 
     // Check if user is an artist
     if (req.user.user_type !== 'artist') {
       console.log('User is not an artist');
-      return res.status(403).json({ message: 'Only artists can upload artworks' });
+      // Clean up uploaded file
+      await fs.unlink(uploadedFilePath).catch(err => console.error('Error deleting file:', err));
+      return res.status(403).json({ 
+        success: false,
+        message: 'Only artists can upload artworks' 
+      });
     }
+
+    // === DUPLICATE DETECTION ===
+    console.log('Starting duplicate detection...');
+
+    const fileBuffer = req.file.buffer ? req.file.buffer : await fs.readFile(uploadedFilePath);
+    const imageMeta = await sharp(fileBuffer).metadata();
+    const allowedFormats = new Set(['jpeg', 'png', 'webp']);
+    if (!allowedFormats.has(imageMeta.format)) {
+      await fs.unlink(uploadedFilePath).catch(err => console.error('Error deleting file:', err));
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid image type. Only jpg, jpeg, png, webp allowed.'
+      });
+    }
+
+    const sha256Hash = generateSHA256Hash(fileBuffer);
+    const imageHash = await generateNormalizedSHA256Hash(fileBuffer);
+    console.log('Generated SHA-256 hash:', sha256Hash);
+
+    const perceptualHash = await generatePerceptualHash(fileBuffer);
+    console.log('Generated perceptual hash:', perceptualHash || 'N/A');
 
     const artistProfile = await ArtistProfile.findOne({ user_id: req.user._id });
     console.log('Artist profile found:', artistProfile);
 
-    // Allow upload even if artist profile doesn't exist yet
-    // This handles the case where a new artist registers and tries to upload immediately
     let artistId;
-
-    // If no artist profile exists, create a temporary one or use user ID directly
-    if (!artistProfile) {
-      console.log('No artist profile found, creating temporary reference');
-      // For now, we'll use the user ID as artist_id, but ideally should create artist profile
-      artistId = req.user._id;
-      console.log('Using user ID as artist ID:', artistId);
-    } else {
+    if (artistProfile) {
       artistId = artistProfile._id;
+    } else {
+      console.log('No artist profile found, using user ID as artist ID');
+      artistId = req.user._id;
     }
 
-    // Construct image URL
-    const imageUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    const exactDuplicate = await Artwork.findOne({ $or: [{ sha256Hash }, { imageHash }] })
+      .select('_id title created_at artist_id');
+    if (exactDuplicate) {
+      console.log('Exact duplicate detected:', exactDuplicate._id, 'hash:', imageHash);
+      await fs.unlink(uploadedFilePath).catch(err => console.error('Error deleting file:', err));
+
+      return res.status(409).json({
+        success: false,
+        errorType: 'DUPLICATE_IMAGE',
+        message: 'Duplicate artwork detected.'
+      });
+    }
+
+    if (perceptualHash) {
+      const minSimilarity = Number(process.env.IMAGE_SIMILARITY_MIN || 0.9);
+      const allArtworks = await Artwork.find({ perceptualHash: { $exists: true, $ne: null } })
+        .select('perceptualHash artist_id')
+        .limit(2000);
+
+      for (const artwork of allArtworks) {
+        const similarity = calculateHashSimilarity(perceptualHash, artwork.perceptualHash);
+        if (similarity >= minSimilarity) {
+          const isDifferentArtist = artwork.artist_id?.toString() !== artistId?.toString();
+          console.log('Similar image detected:', artwork._id, 'similarity:', similarity);
+          await fs.unlink(uploadedFilePath).catch(err => console.error('Error deleting file:', err));
+
+          return res.status(409).json({
+            success: false,
+            errorType: 'DUPLICATE_IMAGE',
+            message: isDifferentArtist
+              ? 'Similar artwork already exists.'
+              : 'Similar artwork already exists.'
+          });
+        }
+      }
+    }
+
+    const watermarkScan = await detectWatermarkedText(fileBuffer);
+    if (watermarkScan.hasKeyword || watermarkScan.hasLargeTextOverlay || watermarkScan.cornerTextDetected) {
+      await fs.unlink(uploadedFilePath).catch(err => console.error('Error deleting file:', err));
+      return res.status(422).json({
+        success: false,
+        errorType: 'WATERMARK_DETECTED',
+        message: 'Watermarked or copyrighted images are not allowed.'
+      });
+    }
+
+    console.log('No duplicates found, proceeding with upload...');
+
+    // === GENERATE WATERMARKED PREVIEW ===
+    const artistName = artistProfile?.artist_name || req.user.full_name || 'Artist';
+    const signatureText = req.body.signatureText || artistName;
+    const signatureRelativePath = req.user.signatureImage;
+    const signatureAbsolutePath = signatureRelativePath
+      ? path.join(__dirname, '..', signatureRelativePath)
+      : null;
+
+    const uploadsRoot = path.join(__dirname, '..', 'uploads');
+    const publicPreviewDir = path.join(uploadsRoot, 'previews');
+    await fs.mkdir(publicPreviewDir, { recursive: true });
+
+    const previewFilename = `${path.parse(req.file.filename).name}-preview.jpg`;
+    const previewAbsolutePath = path.join(publicPreviewDir, previewFilename);
+    const previewRelativePath = `/uploads/previews/${previewFilename}`;
+    const originalRelativePath = `storage/originals/${req.file.filename}`;
+    const previewPublicUrl = `${req.protocol}://${req.get('host')}${previewRelativePath}`;
+
+    try {
+      await generateWatermarkedPreview({
+        originalImagePath: uploadedFilePath,
+        outputImagePath: previewAbsolutePath,
+        signatureImagePath: signatureAbsolutePath,
+        signatureText,
+        platformWatermarkText: process.env.PLATFORM_WATERMARK_TEXT || 'VisualArt',
+        enablePlatformWatermark: String(process.env.ENABLE_PLATFORM_WATERMARK || 'true') === 'true',
+        opacity: Number(process.env.WATERMARK_OPACITY || 0.2)
+      });
+    } catch (watermarkError) {
+      console.error('Error generating watermark:', watermarkError);
+      await fs.unlink(uploadedFilePath).catch(err => console.error('Error deleting file:', err));
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to process image watermark. Please try again.'
+      });
+    }
 
     const artwork = new Artwork({
       title: req.body.title,
       description: req.body.description || '',
       category: req.body.category,
       price: parseFloat(req.body.price),
-      image_url: imageUrl,
+      width: req.body.width ? parseFloat(req.body.width) : null,
+      height: req.body.height ? parseFloat(req.body.height) : null,
+      dimension_unit: req.body.dimension_unit || 'cm',
+      image_url: previewPublicUrl,
+      original_image_url: originalRelativePath,
+      watermarked_image_url: previewPublicUrl,
+      originalImage: originalRelativePath,
+      watermarkedImage: previewRelativePath,
+      imageHash: imageHash,
+      sha256Hash: sha256Hash,
+      perceptualHash: perceptualHash,
       artist_id: artistId,
+      isPublic: true,
       status: 'published'
     });
 
@@ -308,13 +815,147 @@ router.post('/upload', auth, require('../middleware/upload').single('image'), as
     }
 
     console.log('Artwork saved successfully');
+    const responseArtwork = artwork.toObject();
+    delete responseArtwork.original_image_url;
+    delete responseArtwork.originalImage;
+
     res.status(201).json({
+      success: true,
       message: 'Artwork uploaded successfully! 🎨',
-      artwork: artwork
+      artwork: responseArtwork
     });
   } catch (error) {
     console.error('Upload error:', error);
-    res.status(500).json({ message: 'Failed to upload artwork. Please try again.' });
+    
+    // Clean up uploaded files on error
+    if (uploadedFilePath) {
+      await fs.unlink(uploadedFilePath).catch(err =>
+        console.error('Error deleting original file during cleanup:', err)
+      );
+
+      const previewFilename = `${path.parse(uploadedFilePath).name}-preview.jpg`;
+      const previewPath = path.join(__dirname, '..', 'uploads', 'previews', previewFilename);
+      await fs.unlink(previewPath).catch(err =>
+        console.error('Error deleting preview file during cleanup:', err)
+      );
+    }
+
+    // Handle specific MongoDB duplicate key error
+    if (error.code === 11000 && (error.keyPattern?.imageHash || error.keyValue?.imageHash || error.keyPattern?.sha256Hash || error.keyValue?.sha256Hash)) {
+      return res.status(409).json({
+        success: false,
+        errorType: 'DUPLICATE_IMAGE',
+        message: 'Duplicate artwork detected.'
+      });
+    }
+
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to upload artwork. Please try again.',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// Get short-lived token for original image download
+router.post('/:id/original-token', auth, async (req, res) => {
+  try {
+    const artwork = await Artwork.findById(req.params.id);
+    if (!artwork) {
+      return res.status(404).json({ message: 'Artwork not found' });
+    }
+
+    // Check if user has access to original
+    let hasAccess = false;
+    const artistProfile = await ArtistProfile.findOne({ user_id: req.user._id });
+    const userArtistIds = [req.user._id];
+    if (artistProfile) userArtistIds.push(artistProfile._id);
+
+    if (userArtistIds.some(id => id.toString() === artwork.artist_id.toString())) {
+      hasAccess = true;
+    }
+
+    if (artwork.purchased_by && artwork.purchased_by.some(p => p.user_id.toString() === req.user._id.toString())) {
+      hasAccess = true;
+    }
+
+    const orderExists = await Order.findOne({
+      user_id: req.user._id,
+      'items.product': artwork._id,
+      status: { $in: ['completed', 'pending'] }
+    }).select('_id');
+
+    if (orderExists) {
+      hasAccess = true;
+    }
+
+    if (req.user.user_type === 'admin') {
+      hasAccess = true;
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        message: 'Access denied. Purchase this artwork to view the original high-resolution image.'
+      });
+    }
+
+    const jwt = require('jsonwebtoken');
+    const token = jwt.sign(
+      { artworkId: artwork._id.toString(), userId: req.user._id.toString() },
+      process.env.ORIGINAL_IMAGE_TOKEN_SECRET || process.env.JWT_SECRET || 'fallback_secret',
+      { expiresIn: '5m' }
+    );
+
+    res.json({ token, expiresIn: 300 });
+  } catch (error) {
+    console.error('Error issuing original image token:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Download original image (auth + token required)
+router.get('/:id/original', auth, async (req, res) => {
+  try {
+    const token = req.query.token || req.header('x-original-token');
+    if (!token) {
+      return res.status(401).json({ message: 'Missing access token' });
+    }
+
+    const jwt = require('jsonwebtoken');
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.ORIGINAL_IMAGE_TOKEN_SECRET || process.env.JWT_SECRET || 'fallback_secret');
+    // eslint-disable-next-line no-unused-vars
+    } catch (error) {
+      return res.status(401).json({ message: 'Invalid or expired access token' });
+    }
+
+    if (decoded.artworkId !== req.params.id || decoded.userId !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Token does not match request' });
+    }
+
+    const artwork = await Artwork.findById(req.params.id);
+    if (!artwork) {
+      return res.status(404).json({ message: 'Artwork not found' });
+    }
+
+    const originalPath = artwork.originalImage || artwork.original_image_url;
+    if (!originalPath || /^https?:\/\//i.test(originalPath)) {
+      return res.status(404).json({ message: 'Original file not available' });
+    }
+
+    const resolvedPath = path.resolve(path.join(__dirname, '..', originalPath));
+    const originalsRoot = path.resolve(path.join(__dirname, '..', 'storage', 'originals'));
+    const legacyRoot = path.resolve(path.join(__dirname, '..', 'uploads', 'private', 'originals'));
+
+    if (!resolvedPath.startsWith(originalsRoot) && !resolvedPath.startsWith(legacyRoot)) {
+      return res.status(403).json({ message: 'Invalid file path' });
+    }
+
+    return res.sendFile(resolvedPath);
+  } catch (error) {
+    console.error('Error fetching original image:', error);
+    res.status(500).json({ message: error.message });
   }
 });
 

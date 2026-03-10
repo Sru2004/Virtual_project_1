@@ -2,7 +2,7 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 
 const localUri = 'mongodb://127.0.0.1:27017/visualart';
-const atlasUri = process.env.MONGODB_URI || 'mongodb+srv://visual_art:visual@123@cluster0.lotlyct.mongodb.net/visual_Art?retryWrites=true&w=majority';
+const atlasUri = process.env.MONGODB_URI || 'mongodb+srv://srujanatoukare:Srujana123@cluster0.cp7lq.mongodb.net/virtual?appName=Cluster0';
 
 async function migrate() {
   try {

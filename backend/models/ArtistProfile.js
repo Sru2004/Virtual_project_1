@@ -10,10 +10,22 @@ const artistProfileSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  profileImage: {
+    type: String,
+    default: ''
+  },
   bio: {
     type: String,
     minlength: 200,
     maxlength: 300
+  },
+  email: {
+    type: String,
+    default: ''
+  },
+  phone: {
+    type: String,
+    default: ''
   },
   portfolio_link: String,
   art_style: String,
@@ -51,6 +63,10 @@ const artistProfileSchema = new mongoose.Schema({
     default: 0,
     min: 0,
     max: 5
+  },
+  total_reviews: {
+    type: Number,
+    default: 0
   },
   created_at: {
     type: Date,

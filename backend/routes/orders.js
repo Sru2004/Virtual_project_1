@@ -8,6 +8,43 @@ const { auth } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Get orders for artist - their artworks that have been ordered
+router.get('/artist', auth, async (req, res) => {
+  try {
+    // Verify user is an artist
+    if (req.user.user_type !== 'artist') {
+      return res.status(403).json({ success: false, message: 'Access denied. Artist only.' });
+    }
+
+    // Get artist profile
+    const artistProfile = await ArtistProfile.findOne({ user_id: req.user._id });
+    const artistIds = [req.user._id];
+    if (artistProfile) {
+      artistIds.push(artistProfile._id);
+    }
+
+    // Get all artworks for this artist
+    const artworks = await Artwork.find({ 
+      artist_id: { $in: artistIds } 
+    }).select('_id');
+    
+    const artworkIds = artworks.map(art => art._id);
+
+    // Fetch orders for artist's artworks
+    const orders = await Order.find({
+      artwork_id: { $in: artworkIds }
+    })
+      .populate('user_id', 'full_name email phone')
+      .populate('artwork_id', 'title price category image_url medium')
+      .sort({ order_date: -1 });
+
+    res.json({ success: true, orders });
+  } catch (error) {
+    console.error('[ORDERS API] Error fetching artist orders:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Get orders for current user
 router.get('/', auth, async (req, res) => {
   try {
@@ -19,7 +56,8 @@ router.get('/', auth, async (req, res) => {
       // Artists can see orders for their artworks
       const artistProfile = await ArtistProfile.findOne({ user_id: req.user._id });
       if (artistProfile) {
-        query['items.product'] = { $in: await Artwork.find({ artist_id: artistProfile._id }).select('_id') };
+        const artistArtworks = await Artwork.find({ artist_id: artistProfile._id }).select('_id');
+        query.artwork_id = { $in: artistArtworks.map(a => a._id) };
       }
     } else {
       // Regular users can see their own orders
@@ -28,13 +66,28 @@ router.get('/', auth, async (req, res) => {
 
     const orders = await Order.find(query)
       .populate('user_id', 'full_name email')
-      .populate({
-        path: 'items.product',
-        select: 'title price category image_url medium'
-      })
-      .populate('address', 'firstName lastName street city state country phone')
+      .populate('artwork_id', 'title price category image_url medium')
       .sort({ order_date: -1 });
-    res.json({ success: true, orders });
+    
+    // Transform orders to match frontend expected format (with items array)
+    const transformedOrders = orders.map(order => ({
+      _id: order._id,
+      user_id: order.user_id,
+      status: order.status,
+      payment_status: order.payment_status,
+      delivery_status: order.delivery_status,
+      payment_type: order.payment_type,
+      paymentType: order.payment_type,
+      amount: order.total_amount,
+      order_date: order.order_date,
+      shipping_address: order.shipping_address,
+      items: [{
+        product: order.artwork_id,
+        quantity: order.quantity
+      }]
+    }));
+    
+    res.json({ success: true, orders: transformedOrders });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -125,27 +178,41 @@ router.post('/', auth, async (req, res) => {
     // Add tax (2%)
     totalAmount += Math.round(totalAmount * 2 / 100);
 
-    const order = new Order({
-      user_id: userId,
-      items: orderItems,
-      amount: totalAmount,
-      address: address,
-      paymentType: paymentMethod ? 'Online' : 'COD'
-    });
+    // Create orders for each artwork (one order per artwork)
+    const createdOrders = [];
+    for (const item of orderItems) {
+      const artwork = await Artwork.findById(item.product);
+      
+      const order = new Order({
+        user_id: userId,
+        artwork_id: item.product,
+        quantity: item.quantity,
+        total_amount: (artwork.price * item.quantity) + Math.round((artwork.price * item.quantity) * 2 / 100),
+        address: address,
+        payment_type: paymentMethod ? 'Online' : 'COD',
+        payment_status: paymentMethod ? 'paid' : 'pending',
+        delivery_status: 'pending',
+        status: 'pending',
+        shipping_address: address
+      });
 
-    await order.save();
-    await order.populate('user_id', 'full_name email');
-    await order.populate({
-      path: 'items.product',
-      select: 'title price category image_url medium'
-    });
-    await order.populate('address', 'firstName lastName street city state country phone');
+      await order.save();
+      await order.populate('user_id', 'full_name email');
+      await order.populate('artwork_id', 'title price category image_url medium');
+      
+      createdOrders.push(order);
+    }
 
-    if (paymentMethod === 'stripe') {
-      // Handle Stripe payment (placeholder)
-      res.json({ success: true, message: 'Order created, proceed to payment', url: 'https://stripe-payment-url.com' });
+    // For online payment, simulate payment success
+    if (paymentMethod) {
+      res.json({ 
+        success: true, 
+        message: 'Order placed successfully with online payment', 
+        orders: createdOrders,
+        paymentSimulated: true
+      });
     } else {
-      res.json({ success: true, message: 'Order placed successfully', order });
+      res.json({ success: true, message: 'Order placed successfully', orders: createdOrders });
     }
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -223,6 +290,45 @@ router.put('/:id', auth, [
     res.status(500).json({ message: error.message });
   }
 });
+
+// Update order delivery status (Admin only)
+router.put('/:id/delivery', auth, async (req, res) => {
+  try {
+    if (req.user.user_type !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Only admin can update delivery status' });
+    }
+
+    const { delivery_status } = req.body;
+    
+    if (!['pending', 'shipped', 'delivered'].includes(delivery_status)) {
+      return res.status(400).json({ success: false, message: 'Invalid delivery status' });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    // Update delivery status
+    order.delivery_status = delivery_status;
+    
+    // If delivered, mark order as completed
+    if (delivery_status === 'delivered') {
+      order.status = 'delivered';
+    }
+    
+    await order.save();
+    
+    await order.populate('user_id', 'full_name email phone');
+    await order.populate('artwork_id', 'title price category image_url medium');
+
+    res.json({ success: true, message: 'Delivery status updated', order });
+  } catch (error) {
+    console.error('[ORDERS API] Error updating delivery status:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 
 // Delete order
 router.delete('/:id', auth, async (req, res) => {

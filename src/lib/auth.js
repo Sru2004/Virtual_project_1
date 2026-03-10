@@ -25,10 +25,16 @@ export const getCurrentProfile = async () => {
   return getCurrentUser();
 };
 
-export const getArtistProfile = async (artistId) => {
+export const getArtistProfile = async (userId) => {
   try {
-    return await api.getArtistProfile(artistId);
+    const response = await api.getArtistProfileByUserId(userId);
+    // Handle consistent API response format
+    if (response?.success) {
+      return response.data;
+    }
+    return response;
   } catch (error) {
+    console.error('Error fetching artist profile:', error);
     return null;
   }
 };
